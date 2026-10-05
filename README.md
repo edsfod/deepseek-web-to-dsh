@@ -38,6 +38,7 @@ npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek �
 | `--port <端口>` | 判断 `dsh web` 是否在运行时检查的端口，默认 3080 |
 | `--force` | 检测到 Harness 在运行也照样导入 |
 | `--list-workspaces` | 列出已有工作区 |
+| `--delete-archived` | 删除已归档的全部会话，见「删除已归档的会话」 |
 
 ## 导入了什么、没导入什么
 
@@ -80,6 +81,20 @@ npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek �
 2. 用 `workspace.json.before-import-<时间>` 换回 `storages/workspace.json`。
 
 列表缓存里多出来的文件不影响使用，可以不管。
+
+## 删除已归档的会话
+
+Harness 0.2 只能把会话归档，没有删除。归档攒多了可以用本工具一次删掉（不限于导入的会话）：
+
+```
+npx github:edsfod/dsh-chat-import --delete-archived --dry-run
+npx github:edsfod/dsh-chat-import --delete-archived
+```
+
+第一条只列清单。第二条要求 Harness 已退出，然后删掉这些会话的目录和列表缓存，并把它们从 `workspace.json` 的归档、置顶、工作区列表里去掉；改之前原文件复制为 `workspace.json.before-delete-<时间>`。会话内容删除后不能恢复，那份备份只能恢复列表。
+
+- 归档会话派生出的子代理会话一起删。
+- 如果有未归档的会话是从某个归档会话分叉出来的，这个归档会话保留，并在输出里说明。
 
 ## 开发
 

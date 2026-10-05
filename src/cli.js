@@ -5,7 +5,7 @@ import net from "node:net";
 import { execFileSync } from "node:child_process";
 
 import { buildSessions, normalizeTitle } from "./convert.js";
-import { attachToWorkspace, findWorkspace, listWorkspaces, projectDir, sessionExists, workspaceFile, writeListCache, writeSessionLog } from "./store.js";
+import { attachToWorkspace, deleteArchived, findWorkspace, listWorkspaces, planDeleteArchived, projectDir, sessionExists, workspaceFile, writeListCache, writeSessionLog } from "./store.js";
 
 const DEFAULT_PORT = 3080;
 const APP_NAME = "DeepSeek Harness";
@@ -16,6 +16,7 @@ const HELP = `dsh-chat-import：把 DeepSeek 网页版（chat.deepseek.com）导
   dsh-chat-import <conversations.json> --new-workspace <标题> [--workspace-dir <目录>]
   dsh-chat-import <conversations.json> --workspace <标题|目录|id>
   dsh-chat-import --list-workspaces
+  dsh-chat-import --delete-archived [--dry-run]
 
 选项：
   --new-workspace <标题>     新建一个工作区放导入的会话
@@ -31,6 +32,8 @@ const HELP = `dsh-chat-import：把 DeepSeek 网页版（chat.deepseek.com）导
   --port <端口>              用来判断 dsh web 是否在运行的端口，默认 ${DEFAULT_PORT}
   --force                    检测到 Harness 在运行也照样导入（不建议）
   --list-workspaces          列出已有工作区
+  --delete-archived          彻底删除 Harness 里已归档的全部会话（Harness 自己只能归档，
+                             不能删除）。不限于导入的会话；删除后不能恢复，先用 --dry-run 看清单
   -v, --version / -h, --help
 
 导入前请退出 DeepSeek Harness（桌面版连托盘图标一起退出，dsh web 按 Ctrl+C）：
@@ -58,6 +61,7 @@ function parseArgs(argv) {
       case "--dry-run": args.dryRun = true; break;
       case "--force": args.force = true; break;
       case "--list-workspaces": args.listWorkspaces = true; break;
+      case "--delete-archived": args.deleteArchived = true; break;
       case "-v": case "--version": args.version = true; break;
       case "-h": case "--help": args.help = true; break;
       default:
@@ -130,6 +134,7 @@ async function main(argv) {
     for (const w of listWorkspaces(home)) console.log(`${w.title}\t${w.sessionCount} 个会话\t${w.path}\t${w.id}`);
     return;
   }
+  if (args.deleteArchived) return void (await runDeleteArchived(home, args));
   if (args.files.length !== 1) throw new UsageError("请给出一个 conversations.json 的路径");
   if (args.workspace === undefined && args.newWorkspace === undefined) throw new UsageError("请用 --new-workspace <标题> 或 --workspace <标题|目录|id> 指定工作区");
 
@@ -185,14 +190,7 @@ async function main(argv) {
   if (args.dryRun) return void console.log("--dry-run：没有写任何文件");
 
   // 3. Harness 不能在运行
-  const running = [];
-  if (await portOpen(args.port)) running.push(`端口 ${args.port} 上有服务在监听（dsh web）`);
-  const pids = appProcesses();
-  if (pids.length > 0) running.push(`${APP_NAME} 进程在运行（PID ${pids.slice(0, 5).join("、")}）`);
-  if (running.length > 0) {
-    if (!args.force) throw new Error(`${running.join("；")}。\n请先退出 ${APP_NAME}（桌面版连托盘图标一起退出）再导入；确认无关的话加 --force。`);
-    console.warn(`警告：${running.join("；")}，按 --force 继续`);
-  }
+  await requireStopped(args, "导入");
 
   // 4. 写会话日志与列表缓存
   if (target.isNew) fs.mkdirSync(target.dir, { recursive: true });
@@ -224,6 +222,31 @@ async function main(argv) {
   console.log(`\n完成。启动 ${APP_NAME} 即可在「${target.title}」下看到这些会话。`);
   console.log(`要撤销：退出应用，删除 ${projectDir(home, cwd)}，再用上面的备份换回 ${workspaceFile(home)}。`);
   if (failed.length > 0) process.exitCode = 1;
+}
+
+async function requireStopped(args, action) {
+  const running = [];
+  if (await portOpen(args.port)) running.push(`端口 ${args.port} 上有服务在监听（dsh web）`);
+  const pids = appProcesses();
+  if (pids.length > 0) running.push(`${APP_NAME} 进程在运行（PID ${pids.slice(0, 5).join("、")}）`);
+  if (running.length === 0) return;
+  if (!args.force) throw new Error(`${running.join("；")}。\n请先退出 ${APP_NAME}（桌面版连托盘图标一起退出）再${action}；确认无关的话加 --force。`);
+  console.warn(`警告：${running.join("；")}，按 --force 继续`);
+}
+
+async function runDeleteArchived(home, args) {
+  if (args.files.length > 0) throw new UsageError("--delete-archived 不接受文件参数");
+  const plan = planDeleteArchived(home);
+  for (const item of plan.kept) console.log(`保留 ${item.title ?? item.id}：未归档的会话 ${item.neededBy} 是从它分叉出来的`);
+  if (plan.items.length === 0) return void console.log("没有可删除的已归档会话");
+  const own = plan.items.filter((item) => !item.subagent);
+  console.log(`已归档、将删除的会话 ${own.length} 个${plan.items.length > own.length ? `，连同它们的子代理会话 ${plan.items.length - own.length} 个` : ""}：`);
+  for (const item of own) console.log(`  ${item.title ?? "（无标题）"}\t${item.id}${item.dirs.length === 0 ? "\t（盘上已没有日志，只清登记）" : ""}`);
+  if (args.dryRun) return void console.log("--dry-run：没有删除任何东西");
+  await requireStopped(args, "删除");
+  const result = deleteArchived(home, plan);
+  console.log(`已删除 ${plan.items.length} 个会话（${result.dirs} 个目录）`);
+  console.log(`改动前的工作区文件备份在：${result.backup}（只能恢复列表，会话内容已删除）`);
 }
 
 export async function run(argv = process.argv.slice(2)) {

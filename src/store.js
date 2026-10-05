@@ -207,3 +207,136 @@ export function attachToWorkspace(home, target, sessionIds, now = new Date()) {
   fs.renameSync(temp, file);
   return { id, created, added: fresh.length, total: record.sessionIds.length, backup };
 }
+
+// ---------------------------------------------------------------------------
+// 删除已归档的会话
+// ---------------------------------------------------------------------------
+
+const LOG_NAME = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/;
+
+/** 读一个会话目录里最新一代日志的文件头；读不了返回 null。 */
+function readHeader(dir) {
+  let best;
+  for (const name of fs.readdirSync(dir)) {
+    const match = LOG_NAME.exec(name);
+    if (!match) continue;
+    const version = Number(match[1] ?? 0);
+    if (!best || version > best.version) best = { version, name, zstd: match[2] !== undefined };
+  }
+  if (!best) return null;
+  try {
+    const buffer = fs.readFileSync(path.join(dir, best.name));
+    const first = best.zstd ? zstdDecompressSync(buffer, { info: true }).buffer : buffer;
+    const end = first.indexOf(10);
+    const header = JSON.parse(first.subarray(0, end === -1 ? first.length : end).toString("utf8"));
+    return header?.type === "session" && typeof header.id === "string" ? header : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 数据目录里的全部会话：{ id, dir, parent, origin }。 */
+function scanSessions(home) {
+  const root = path.join(home, "sessions");
+  const found = [];
+  let projects = [];
+  try {
+    projects = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory());
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  for (const project of projects) {
+    for (const entry of fs.readdirSync(path.join(root, project.name), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = path.join(root, project.name, entry.name);
+      const header = readHeader(dir);
+      if (header) found.push({ id: header.id, dir, parent: header.parentSession, origin: header.origin });
+    }
+  }
+  return found;
+}
+
+/**
+ * 算出删除已归档会话要动什么，不写任何文件。
+ * - 归档会话派生出的子代理会话跟着删。
+ * - 有未归档的会话是从某个归档会话分叉出来的（它的前半段记在那个归档会话里），这个归档会话不删。
+ */
+export function planDeleteArchived(home) {
+  const { data } = loadWorkspaces(home);
+  const archived = new Set(data.global.archivedSessionIds ?? []);
+  const sessions = scanSessions(home);
+  const byParent = new Map();
+  for (const s of sessions) {
+    if (s.parent === undefined) continue;
+    if (!byParent.has(s.parent)) byParent.set(s.parent, []);
+    byParent.get(s.parent).push(s);
+  }
+  // 子代理会话不在工作区列表里，归属跟着父会话走
+  const doomed = new Set(archived);
+  const subagents = new Set();
+  const queue = [...archived];
+  while (queue.length > 0) {
+    for (const child of byParent.get(queue.pop()) ?? []) {
+      if (child.origin !== "subagent" || doomed.has(child.id)) continue;
+      doomed.add(child.id);
+      subagents.add(child.id);
+      queue.push(child.id);
+    }
+  }
+  const kept = [];
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const s of sessions) {
+      if (doomed.has(s.id) || s.parent === undefined || !doomed.has(s.parent)) continue;
+      doomed.delete(s.parent);
+      kept.push({ id: s.parent, neededBy: s.id });
+      changed = true;
+    }
+  }
+  const titleOf = (id) => {
+    try {
+      const file = path.join(home, "storages", "session_projcache", "sessions", `${encodeSegment(id)}.json`);
+      return JSON.parse(fs.readFileSync(file, "utf8")).record?.rows?.title?.val ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const items = [...doomed].map((id) => ({
+    id,
+    title: titleOf(id),
+    subagent: subagents.has(id),
+    dirs: sessions.filter((s) => s.id === id).map((s) => s.dir),
+  }));
+  return { items, kept: kept.map((k) => ({ ...k, title: titleOf(k.id) })) };
+}
+
+/** 按 planDeleteArchived 的结果删除：先改工作区文件（留备份），再删列表缓存和会话目录。 */
+export function deleteArchived(home, plan, now = new Date()) {
+  const { file, data } = loadWorkspaces(home);
+  const gone = new Set(plan.items.map((item) => item.id));
+  if (gone.size === 0) return { backup: null, dirs: 0 };
+  const stamp = now.toISOString();
+  data.global.archivedSessionIds = (data.global.archivedSessionIds ?? []).filter((id) => !gone.has(id));
+  if (Array.isArray(data.global.pinnedSessionIds)) data.global.pinnedSessionIds = data.global.pinnedSessionIds.filter((id) => !gone.has(id));
+  for (const record of Object.values(data.tables.workspaces)) {
+    const before = (record.sessionIds ?? []).length;
+    record.sessionIds = (record.sessionIds ?? []).filter((id) => !gone.has(id));
+    if (record.sessionIds.length !== before) record.updatedAt = stamp;
+  }
+  const backup = `${file}.before-delete-${stamp.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`;
+  fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
+  const temp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(data, null, 2) + "\n");
+  fs.renameSync(temp, file);
+  let dirs = 0;
+  const sessionsRoot = path.resolve(home, "sessions") + path.sep;
+  for (const item of plan.items) {
+    fs.rmSync(path.join(home, "storages", "session_projcache", "sessions", `${encodeSegment(item.id)}.json`), { force: true });
+    for (const dir of item.dirs) {
+      if (!path.resolve(dir).startsWith(sessionsRoot)) throw new Error(`拒绝删除数据目录之外的路径：${dir}`);
+      fs.rmSync(dir, { recursive: true, force: true });
+      dirs++;
+    }
+  }
+  return { backup, dirs };
+}

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildSession, buildSessions, normalizeTitle } from "../src/convert.js";
-import { attachToWorkspace, encodeSegment, listWorkspaces, projectKey, readSessionLog, sessionExists, writeListCache, writeSessionLog } from "../src/store.js";
+import { attachToWorkspace, deleteArchived, encodeSegment, listWorkspaces, planDeleteArchived, projectKey, readSessionLog, sessionExists, writeListCache, writeSessionLog } from "../src/store.js";
 
 const message = (time, ...fragments) => ({ model: "deepseek-reasoner", inserted_at: time, fragments });
 const conversation = () => ({
@@ -141,4 +141,45 @@ test("分支标题加后缀后仍不超过长度上限", () => {
   const title = buildSessions(conv, { branches: "others" }).sessions[0].title;
   assert.ok(Buffer.byteLength(title) <= 80);
   assert.ok(title.endsWith("（分支 2）"));
+});
+
+test("删除已归档会话：只删归档的，分叉来源保留，登记、缓存、目录一起清", () => {
+  const home = tempHome();
+  const cwd = path.join(home, "ws");
+  const make = (id) => {
+    const conv = conversation();
+    conv.id = id;
+    const session = buildSession(conv);
+    writeSessionLog(home, cwd, session);
+    writeListCache(home, cwd, session);
+    return session;
+  };
+  const [a, b, c] = ["a", "b", "c"].map(make);
+  // d 是从 b 分叉出来的未归档会话（应用升级后的文件名与带 parentSession 的文件头）
+  const forkDir = path.join(home, "sessions", projectKey(cwd), "session-d");
+  fs.mkdirSync(forkDir);
+  fs.writeFileSync(path.join(forkDir, "session.v4.jsonl"), JSON.stringify({ type: "session", version: 4, id: "session-d", createdAt: 1, cwd, isSeeded: true, delegationDepth: 0, parentSession: b.id }) + "\n");
+  attachToWorkspace(home, { title: "导入", dir: cwd }, [a.id, b.id, c.id, "session-d"]);
+  const file = path.join(home, "storages", "workspace.json");
+  const data = JSON.parse(fs.readFileSync(file, "utf8"));
+  data.global.archivedSessionIds = [a.id, b.id, "session-ghost"];
+  data.global.pinnedSessionIds = [a.id];
+  fs.writeFileSync(file, JSON.stringify(data));
+
+  const plan = planDeleteArchived(home);
+  assert.deepEqual(plan.items.map((i) => [i.id, i.title, i.dirs.length]).sort(), [["session-a", "测试 标题", 1], ["session-ghost", null, 0]]);
+  assert.deepEqual(plan.kept.map((k) => [k.id, k.neededBy]), [["session-b", "session-d"]]);
+  assert.ok(sessionExists(home, cwd, a.id), "只算计划时不删");
+
+  const result = deleteArchived(home, plan);
+  assert.equal(result.dirs, 1);
+  assert.ok(fs.existsSync(result.backup));
+  assert.equal(sessionExists(home, cwd, a.id), false);
+  assert.ok(sessionExists(home, cwd, b.id) && sessionExists(home, cwd, c.id));
+  assert.equal(fs.existsSync(path.join(home, "storages", "session_projcache", "sessions", "session-a.json")), false);
+  const after = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual(after.global.archivedSessionIds, [b.id]);
+  assert.deepEqual(after.global.pinnedSessionIds, []);
+  assert.deepEqual(Object.values(after.tables.workspaces)[0].sessionIds.sort(), [b.id, c.id, "session-d"].sort());
+  assert.equal(planDeleteArchived(home).items.length, 0);
 });
