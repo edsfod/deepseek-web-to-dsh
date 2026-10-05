@@ -1,0 +1,4 @@
+# 行尾不做任何转换：仓库里存的字节就是工作目录里的字节，
+# 这样不装 git 按算法算出的目录哈希也等于 git 的 tree 哈希（Git for Windows 默认 core.autocrlf=true 会改行尾）。
+# 各文件该用什么行尾由 .editorconfig 定。
+* -text
