@@ -1,4 +1,4 @@
-# dsh-chat-import
+# deepseek-web-to-dsh
 
 把 DeepSeek 网页版（chat.deepseek.com）导出的聊天记录导入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，导入后的会话可以在 Harness 里接着聊。
 
@@ -18,13 +18,13 @@
 3. 先看看会导入什么（不写文件），再正式导入：
 
 ```
-npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek 网页版" --dry-run
-npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek 网页版"
+npx github:edsfod/deepseek-web-to-dsh conversations.json --new-workspace "DeepSeek 网页版" --dry-run
+npx github:edsfod/deepseek-web-to-dsh conversations.json --new-workspace "DeepSeek 网页版"
 ```
 
 4. 启动 Harness，会话在新工作区「DeepSeek 网页版」下。
 
-也可以克隆本仓库，把上面的 `npx github:edsfod/dsh-chat-import` 换成 `node bin/dsh-chat-import.js`。
+也可以克隆本仓库，把上面的 `npx github:edsfod/deepseek-web-to-dsh` 换成 `node bin/deepseek-web-to-dsh.js`。
 
 | 选项 | 说明 |
 |---|---|
@@ -61,8 +61,8 @@ npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek �
 分支多的话建议放进另一个工作区，主列表不会被冲乱：
 
 ```
-npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek 网页版"
-npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek 网页版（其它分支）" --branches others
+npx github:edsfod/deepseek-web-to-dsh conversations.json --new-workspace "DeepSeek 网页版"
+npx github:edsfod/deepseek-web-to-dsh conversations.json --new-workspace "DeepSeek 网页版（其它分支）" --branches others
 ```
 
 ## 它写了哪些文件
@@ -87,8 +87,8 @@ npx github:edsfod/dsh-chat-import conversations.json --new-workspace "DeepSeek �
 Harness 0.2 只能把会话归档，没有删除。归档攒多了可以用本工具一次删掉（不限于导入的会话）：
 
 ```
-npx github:edsfod/dsh-chat-import --delete-archived --dry-run
-npx github:edsfod/dsh-chat-import --delete-archived
+npx github:edsfod/deepseek-web-to-dsh --delete-archived --dry-run
+npx github:edsfod/deepseek-web-to-dsh --delete-archived
 ```
 
 第一条只列清单。第二条要求 Harness 已退出，然后删掉这些会话的目录和列表缓存，并把它们从 `workspace.json` 的归档、置顶、工作区列表里去掉；改之前原文件复制为 `workspace.json.before-delete-<时间>`。会话内容删除后不能恢复，那份备份只能恢复列表。

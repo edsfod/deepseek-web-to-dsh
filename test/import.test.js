@@ -21,7 +21,7 @@ const conversation = () => ({
 });
 
 function tempHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-chat-import-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "deepseek-web-to-dsh-"));
   fs.mkdirSync(path.join(home, "storages"));
   fs.writeFileSync(path.join(home, "storages", "workspace.json"), JSON.stringify({
     unit: { name: "workspace", version: 2 },

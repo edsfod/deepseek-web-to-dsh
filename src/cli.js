@@ -10,13 +10,13 @@ import { attachToWorkspace, deleteArchived, findWorkspace, listWorkspaces, planD
 const DEFAULT_PORT = 3080;
 const APP_NAME = "DeepSeek Harness";
 
-const HELP = `dsh-chat-import：把 DeepSeek 网页版（chat.deepseek.com）导出的聊天记录导入 DeepSeek Harness
+const HELP = `deepseek-web-to-dsh：把 DeepSeek 网页版（chat.deepseek.com）导出的聊天记录导入 DeepSeek Harness
 
 用法：
-  dsh-chat-import <conversations.json> --new-workspace <标题> [--workspace-dir <目录>]
-  dsh-chat-import <conversations.json> --workspace <标题|目录|id>
-  dsh-chat-import --list-workspaces
-  dsh-chat-import --delete-archived [--dry-run]
+  deepseek-web-to-dsh <conversations.json> --new-workspace <标题> [--workspace-dir <目录>]
+  deepseek-web-to-dsh <conversations.json> --workspace <标题|目录|id>
+  deepseek-web-to-dsh --list-workspaces
+  deepseek-web-to-dsh --delete-archived [--dry-run]
 
 选项：
   --new-workspace <标题>     新建一个工作区放导入的会话
