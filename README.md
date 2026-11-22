@@ -1,5 +1,7 @@
 # deepseek-web-to-dsh
 
+> **提示**：DeepSeek Harness（`v0.2.2-rc.3` 起）已内置官方实验性插件 `@deepseek-ai/dsh-deepseek-chat-import`（在插件页「更多 → 实验性插件」中启用），**日常导入建议直接使用官方插件**。本仓库仅在需要保留其它对话分支（`--branches`）、重复导入去重或批量清理已归档会话（`--delete-archived`）时仍有参考价值，现已归档。
+
 把 DeepSeek 网页版（chat.deepseek.com）导出的聊天记录导入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，导入后的会话可以在 Harness 里接着聊。
 
 - 列表里直接显示网页版的原标题。
